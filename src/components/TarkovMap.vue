@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import {onMounted, ref} from "vue";
+import {inject, onMounted, type Ref, ref} from "vue";
 import {Projection} from "ol/proj";
 
 import playerIcon from '@/assets/images/plain-arrow.png';
@@ -17,8 +17,9 @@ import laboratory_loot_map_data from '../assets/map_data/laboratory_loot_map_mod
 import factory_map_data from '../assets/map_data/factory_map_data.json';
 import sandbox_map_data from '../assets/map_data/sandbox_map_data.json';
 import map_not_implemented_data from '../assets/map_data/map_not_implemented_data.json';
+import enter_raid_data from '../assets/map_data/enter_raid_data.json';
 import type {FeatureLike} from "ol/Feature";
-import {Feature} from "ol";
+import {Feature, View} from "ol";
 import {Point} from "ol/geom";
 import {Icon, Style} from "ol/style";
 import type VectorSource from "ol/source/Vector";
@@ -37,9 +38,11 @@ const gameMapNamesDict = {
   "factory4_night": factory_map_data,
   "Sandbox": sandbox_map_data,
   "map_not_implemented": map_not_implemented_data,
+  "EnterARaid": enter_raid_data
 };
 
 let mapDataUpdateInterval = 250;
+let updateTimer: number;
 
 let currentMapString = "map_not_implemented";
 let currentMapData = map_not_implemented_data;
@@ -52,10 +55,15 @@ const projection = new Projection({
   extent: mapImageExtent.value,
 });
 
+const selectConditions = inject("ol-selectconditions");
+
+const selectCondition = selectConditions.singleClick;
+
 let gameMap = ref(null);
-let mapView = ref(null);
+let mapView = ref<View>();
 const center = ref([40, 40]);
-const zoom = ref(8);
+const zoom = ref(0);
+const minZoom = ref(0);
 const rotation = ref(0);
 const extent = ref(currentMapData.bounds);
 
@@ -67,12 +75,16 @@ const currentResolution = ref(0);
 const drawEnable = ref(false);
 const drawType = ref("Point");
 
+const followPlayer = ref(false);
+
 const botMarkerLayer = ref(null);
-const botMarkerSource = ref<{ source: VectorSource }>(null);
+const botMarkerSource = ref<{ source: VectorSource }>();
 const botMarkers = ref<FeatureLike[]>([]);
 let currentBots: Object[] = [];
 
 let currentAirdrop: Object|null = null;
+
+const questMarkers = ref<FeatureLike[]>([]);
 
 const playerMarkerFeature = new Feature({
   geometry: new Point([-300, -300]),
@@ -118,6 +130,18 @@ const botMarkerStyle = new Style({
     anchorXUnits: 'fraction',
     anchorYUnits: 'fraction',
     src: '/images/bot.png',
+    color: [0, 128, 128, 1],
+    scale: 0.5,
+  }),
+});
+
+const bossBotMarkerStyle = new Style({
+  image: new Icon({
+    anchor: [0.5, 0.5],
+    anchorXUnits: 'fraction',
+    anchorYUnits: 'fraction',
+    src: '/images/bot.png',
+    color: [255, 128, 128, 1],
     scale: 0.5,
   }),
 });
@@ -174,26 +198,34 @@ function calculatePolynomialValue(x: number, coefficients: number[]) {
   return result;
 }
 
-const changeDrawType = (active, draw) => {
+const changeDrawType = (active: boolean, draw: string) => {
   drawEnable.value = active;
   drawType.value = draw;
 };
 
-const drawstart = (event) => {
+const drawstart = (event: any) => {
   console.log(event);
 };
 
-const drawend = (event) => {
+const drawend = (event: any) => {
   console.log(event);
 };
 
-function resolutionChanged(event) {
+function resolutionChanged(event: any) {
   currentResolution.value = event.target.getResolution();
   currentZoom.value = event.target.getZoom();
 }
-function centerChanged(event) {
+function centerChanged(event: any) {
   currentCenter.value = event.target.getCenter();
 }
+
+const featureSelected = (event: any) => {
+  console.log(event);
+};
+
+const selectInteactionFilter = (feature: any) => {
+  return feature.values_.name != undefined;
+};
 
 function changeMap(newMapString: string) {
   console.log(`changeMap: ${newMapString}`);
@@ -215,19 +247,19 @@ function changeMap(newMapString: string) {
   center.value = [currentMapData.bounds[2] / 2, currentMapData.bounds[3] / 2];
   zoom.value = 0;
   
+  minZoom.value = currentMapData.minZoom ? currentMapData.minZoom : 0;
+  
   extent.value = currentMapData.bounds;
   extent.value = [currentMapData.bounds[2] * -0.1, currentMapData.bounds[2] * -0.1, currentMapData.bounds[2] * 1.1, currentMapData.bounds[3] * 1.1];
   
-  airdropMarker.value?.getGeometry().setCoordinates([-500, -500]);
+  airdropMarker.value?.getGeometry()?.setCoordinates([-1000, -1000]);
 }
 
-function debugMethod(active: boolean) {
-  console.log(active);
-  
+function setFollowPlayer(active: boolean) {
   if (active) {
-    botMarkerStyle.opacity = 0;
+    followPlayer.value = true;
   } else {
-    botMarkerStyle.opacity = 1;
+    followPlayer.value = false;
   }
 }
 
@@ -236,11 +268,27 @@ async function mapDataFetch() {
     const response = await fetch('http://localhost:45365/mapData');
     const data = await response.json();
   
-    // console.log(data);
+    console.log(data);
     
     // if (data?.MapName === undefined || data.MapName === currentMapString) {
     //   return;
     // }
+    
+    if (data.IsGameInProgress === false) {
+      if (currentMapString !== "EnterARaid") {
+        changeMap("EnterARaid");
+
+        playerMarker.value?.getGeometry()?.setCoordinates([-1000, -1000]);
+
+        airdropMarker.value?.getGeometry()?.setCoordinates([-1000, -1000]);
+        
+        botMarkers.value.forEach(botMarker => {
+          removeBot(botMarker.getProperties().BotId);
+        });
+      }
+      
+      return;
+    }
     
     if (data.MapName && data.MapName !== currentMapString) {
       changeMap(data.MapName);
@@ -248,8 +296,12 @@ async function mapDataFetch() {
     
     let {x, z} = adjustCoordinatesForMap(data.XPosition, data.ZPosition, data.YPosition);
     
-    playerMarker.value?.getGeometry().setCoordinates([x, z]);
+    playerMarker.value?.getGeometry()?.setCoordinates([x, z]);
     playerMarker.value?.getStyle().getImage().setRotation((currentMapData.MapRotation + data.XRotation) * (Math.PI / 180));
+
+    if (followPlayer.value) {
+      mapView.value?.setCenter([x, z]);
+    }
     
     // console.log(`Updating with coordinates: ${x}, ${z}`);
     
@@ -298,6 +350,9 @@ async function mapDataFetch() {
   } catch (e) {
     if (e instanceof TypeError) {
       // Probably failed to connect
+      clearInterval(updateTimer);
+      
+      // TODO: Notify user of connection failure
     } else {
       console.error(e);
     }
@@ -312,23 +367,34 @@ function addAirdrop(x: number, z: number) {
     z
   };
   
-  airdropMarker.value?.getGeometry().setCoordinates([x, z]);
+  airdropMarker.value?.getGeometry()?.setCoordinates([x, z]);
 }
 
-function addBot(id: number, type: string, x: number, z: number, y: number) {
+function addBot(id: number, type: number, x: number, z: number, y: number) {
   const botMarkerFeature = new Feature({
     geometry: new Point([-500, -500]),
     BotId: id,
     BotType: type,
   });
 
+  switch (type) {
+    case 0:
+      botMarkerFeature.setStyle(botMarkerStyle);
+      break;
+    case 3:
+      console.log("BOSS BOT FOUND");
+      botMarkerFeature.setStyle(bossBotMarkerStyle);
+      break;
+    default:
+      botMarkerFeature.setStyle(botMarkerStyle);
+      break;
+  }
+  // botMarkerFeature.setStyle(botMarkerStyle);
   
-
-  botMarkerFeature.setStyle(botMarkerStyle);
   
   const source = botMarkerSource.value?.source;
 
-  source.addFeature(botMarkerFeature);
+  source?.addFeature(botMarkerFeature);
   
   botMarkers.value.push(botMarkerFeature);
   
@@ -357,7 +423,7 @@ function removeBot(id: number) {
   
   console.log(botToRemove);
 
-  botMarkerSource.value.source.removeFeature(botToRemove);
+  botMarkerSource.value?.source.removeFeature(botToRemove);
   
   // botMarkers.value = botMarkers.value.filtered(botMarker => botMarker.BotId !== id);
 }
@@ -365,39 +431,17 @@ function removeBot(id: number) {
 function updateBot(id: number, x: number, z: number, y: number) {
   // console.log(`updateBot: ${id}, ${x}, ${z}, ${y}`);
 
-  // const source = botMarkerSource.value?.source;
-  
-  // console.log(layerFeatures);
-
   const foundBot = botMarkers.value.find(botMarker => botMarker.getProperties().BotId === id);
   
-  // console.log(foundBot.getProperties());
-  
   foundBot?.getGeometry().setCoordinates([x, z]);
-  
-  // botMarkers.value.find(botMarker => botMarker.BotId === id)?.getGeometry().setCoordinates([x, z]);
 }
 
 onMounted(() => {
-  changeMap("map_not_implemented");
-
-  // const playerIconStyle = new Style({
-  //   image: new Icon({
-  //     anchor: [0.5, 0.5],
-  //     anchorXUnits: 'fraction',
-  //     anchorYUnits: 'fraction',
-  //     src: require('../assets/player.png'),
-  //     scale: 0.5
-  //     // width: 10,
-  //     // height: 10
-  //   }),
-  // });
-  
-  // playerMarkerFeature.setStyle(playerIconStyle);
+  changeMap("EnterARaid");
   
   mapDataFetch();
   
-  setInterval(mapDataFetch, mapDataUpdateInterval);
+  updateTimer = setInterval(mapDataFetch, mapDataUpdateInterval);
 });
 </script>
 
@@ -416,41 +460,48 @@ onMounted(() => {
         :extent="extent"
         :enableRotation="false"
         :showFullExtent="true"
+        :minZoom="minZoom"
         @change:center="centerChanged"
         @change:resolution="resolutionChanged"
     />
 
     <ol-control-bar>
-      <ol-toggle-control
-          html="🟢"
-          className="edit"
-          title="Circle"
-          :onToggle="(active) => changeDrawType(active, 'Circle')"
-      />
-      <ol-toggle-control
-          html="〰️"
-          className="edit"
-          title="LineString"
-          :onToggle="(active) => changeDrawType(active, 'LineString')"
-      />
+<!--      <ol-toggle-control-->
+<!--          html="🟢"-->
+<!--          className="edit"-->
+<!--          title="Circle"-->
+<!--          :onToggle="(active: boolean) => changeDrawType(active, 'Circle')"-->
+<!--      />-->
+<!--      <ol-toggle-control-->
+<!--          html="〰️"-->
+<!--          className="edit"-->
+<!--          title="Line (double click to finish)"-->
+<!--          :onToggle="(active: boolean) => changeDrawType(active, 'LineString')"-->
+<!--      />-->
+<!--      <ol-toggle-control-->
+<!--          html="〰️"-->
+<!--          className="edit"-->
+<!--          title="Trash"-->
+<!--          :onToggle="(active: boolean) => changeDrawType(active, 'LineString')"-->
+<!--      />-->
       <ol-zoomtoextent-control 
-          label="E"
-          tipLabel="Fit to Map"
+          label="↕️"
+          tipLabel="Full map"
       />
       <ol-toggle-control
-          html="D"
+          html="F"
           className="edit"
-          title="DEBUG"
-          :onToggle="(active) => debugMethod(active)"
+          title="Follow Player"
+          :onToggle="(active: boolean) => setFollowPlayer(active)"
       />
     </ol-control-bar>
 
-    <ol-interaction-draw
-        :type="drawType"
-        @drawend="drawend"
-        @drawstart="drawstart"
-    >
-    </ol-interaction-draw>
+<!--    <ol-interaction-draw-->
+<!--        :type="drawType"-->
+<!--        @drawend="drawend"-->
+<!--        @drawstart="drawstart"-->
+<!--    >-->
+<!--    </ol-interaction-draw>-->
 
     <ol-image-layer id="tarkovMap">
       <ol-source-image-static
@@ -460,29 +511,29 @@ onMounted(() => {
       ></ol-source-image-static>
     </ol-image-layer>
 
-    <ol-vector-layer>
-      <ol-source-vector :projection="projection">
-        <ol-interaction-draw
-            v-if="drawEnable"
-            :type="drawType"
-            @drawend="drawend"
-            @drawstart="drawstart"
-        >
-          <ol-style>
-            <ol-style-stroke color="blue" :width="2"></ol-style-stroke>
-            <ol-style-fill color="rgba(255, 255, 0, 0.4)"></ol-style-fill>
-          </ol-style>
-        </ol-interaction-draw>
-      </ol-source-vector>
+<!--    <ol-vector-layer>-->
+<!--      <ol-source-vector :projection="projection">-->
+<!--        <ol-interaction-draw-->
+<!--            v-if="drawEnable"-->
+<!--            :type="drawType"-->
+<!--            @drawend="drawend"-->
+<!--            @drawstart="drawstart"-->
+<!--        >-->
+<!--          <ol-style>-->
+<!--            <ol-style-stroke color="blue" :width="2"></ol-style-stroke>-->
+<!--            <ol-style-fill color="rgba(255, 255, 0, 0.4)"></ol-style-fill>-->
+<!--          </ol-style>-->
+<!--        </ol-interaction-draw>-->
+<!--      </ol-source-vector>-->
 
-      <ol-style>
-        <ol-style-stroke color="red" :width="2"></ol-style-stroke>
-        <ol-style-fill color="rgba(255,255,255,0.1)"></ol-style-fill>
-        <ol-style-circle :radius="7">
-          <ol-style-fill color="red"></ol-style-fill>
-        </ol-style-circle>
-      </ol-style>
-    </ol-vector-layer>
+<!--      <ol-style>-->
+<!--        <ol-style-stroke color="red" :width="2"></ol-style-stroke>-->
+<!--        <ol-style-fill color="rgba(255,255,255,0.1)"></ol-style-fill>-->
+<!--        <ol-style-circle :radius="7">-->
+<!--          <ol-style-fill color="red"></ol-style-fill>-->
+<!--        </ol-style-circle>-->
+<!--      </ol-style>-->
+<!--    </ol-vector-layer>-->
 
     <ol-vector-layer>
       <ol-source-vector :features="[playerMarker]" />
@@ -508,7 +559,27 @@ onMounted(() => {
 <!--      </ol-style>-->
     </ol-vector-layer>
 
-    <ol-interaction-link />
+    <ol-vector-layer ref="questMarkerLayer">
+      <ol-source-vector ref="questMarkerSource" :features="questMarkers" />
+
+      <!--      <ol-style>-->
+      <!--        <ol-style-icon :src="botIcon" :scale="3"></ol-style-icon>-->
+      <!--      </ol-style>-->
+    </ol-vector-layer>
+
+    <ol-interaction-select
+        @select="featureSelected"
+        :condition="selectCondition"
+        :filter="selectInteactionFilter"
+    >
+      <ol-style>
+        <ol-style-stroke color="green" :width="10"></ol-style-stroke>
+        <ol-style-fill color="rgba(255,255,255,0.5)"></ol-style-fill>
+        <ol-style-circle :radius="7">
+          <ol-style-fill color="blue"></ol-style-fill>
+        </ol-style-circle>
+      </ol-style>
+    </ol-interaction-select>
   </ol-map>
 </template>
 
