@@ -279,31 +279,17 @@ function centerChanged(event: any) {
   currentCenter.value = event.target.getCenter();
 }
 
-const featureSelected = (event: any) => {
-  // console.log(event);
-  try {
+const featureSelected = (event: any) => {  
+  if (event.selected[0]) {
 
-    if (event.selected[0]) {
-      // console.log(event.selected[0].getProperties());
-
-      // mapRef.value?.map.addOverlay(questOverlayRef.value?.overlay);
-      // showQuestOverlay.value = true;
-      // questOverlayRef.value?.overlay.setPosition(event.selected[0].getGeometry().getCoordinates());
-      //
-      // console.log(mapRef.value?.map.getOverlays());
-
-      if (event.selected[0].getProperties()?.NameText !== undefined) {
-        showQuestOverlay.value = true;
-        questOverlayCoordinates.value = event.selected[0].getGeometry().getCoordinates();
-        questName.value = event.selected[0].getProperties().NameText || "error loading quest name";
-        questDescription.value = event.selected[0].getProperties().Description;
-      }
-    } else {
-      showQuestOverlay.value = false;
+    if (event.selected[0].getProperties()?.NameText !== undefined) {
+      showQuestOverlay.value = true;
+      questOverlayCoordinates.value = event.selected[0].getGeometry().getCoordinates();
+      questName.value = event.selected[0].getProperties().NameText || "error loading quest name";
+      questDescription.value = event.selected[0].getProperties().Description;
     }
-  }
-  catch (e) {
-    console.log(e);
+  } else {
+    showQuestOverlay.value = false;
   }
 };
 
@@ -313,14 +299,6 @@ const selectInteactionFilter = (feature: any) => {
 
 function changeMap(newMapString: string) {
   console.log(`changeMap: ${newMapString}`);
-  
-  // if (!(newMapString in Object.keys(gameMapNamesDict))) {
-  //   currentMapString = 'map_not_implemented';
-  // } else {
-  //   currentMapString = newMapString;
-  // }
-  
-  // currentMapString = (!(newMapString in gameMapNamesDict)) ? 'map_not_implemented' : newMapString;
   
   currentMapString = newMapString;
   currentMapData = gameMapNamesDict[currentMapString as keyof typeof gameMapNamesDict];
@@ -349,6 +327,8 @@ function changeMap(newMapString: string) {
 
 function setShowBots(active: boolean) {
   showBots = active;
+
+  localStorage.setItem("showBots", active.toString());
   
   if (!active) {
     botMarkers.value.forEach(botMarker => {
@@ -369,12 +349,6 @@ async function mapDataFetch() {
   try {
     const response = await fetch('http://' + serverAddress.value + ':' + serverPort.value + '/mapData');
     const data = await response.json();
-  
-    // console.log(data);
-    
-    // if (data?.MapName === undefined || data.MapName === currentMapString) {
-    //   return;
-    // }
     
     if (data.IsGameInProgress === false) {
       if (currentMapString !== "EnterARaid") {
@@ -446,14 +420,8 @@ async function mapDataFetch() {
           let foundBot = data.BotLocations?.find(obj => obj.BotId === existingBot.BotId);
 
           if (foundBot !== undefined) {
-            // let x = calculatePolynomialValue(existingBot.XPosition, currentMapData.XCoefficients);
-            // let z = calculatePolynomialValue(existingBot.ZPosition, currentMapData.ZCoefficients);
 
             let {x, z, y} = adjustCoordinatesForMap(foundBot.XPosition, foundBot.ZPosition, foundBot.YPosition);
-
-            // let x = calculatePolynomialValue(foundBot.XPosition, currentMapData.XCoefficients);
-            // let z = calculatePolynomialValue(foundBot.ZPosition, currentMapData.ZCoefficients);
-            // let y = 1.0;
 
             updateBot(foundBot.BotId, x, z, y);
           }
@@ -482,8 +450,6 @@ async function mapDataFetch() {
 async function questDataFetch() {
   const response = await fetch('http://' + serverAddress.value + ':' + serverPort.value + '/quests');
   const data = await response.json();
-  
-  // console.log(data);
   
   questMarkers.value = [];
   
@@ -527,19 +493,13 @@ function addBot(id: number, type: number, x: number, z: number, y: number) {
       botMarkerFeature.setStyle(botMarkerStyle);
       break;
     case 3:
-      console.log("BOSS BOT FOUND");
+      // console.log("BOSS BOT FOUND");
       botMarkerFeature.setStyle(bossBotMarkerStyle);
       break;
     default:
       botMarkerFeature.setStyle(botMarkerStyle);
       break;
   }
-  // botMarkerFeature.setStyle(botMarkerStyle);
-  
-  
-  // const source = botMarkerSource.value?.source;
-  //
-  // source?.addFeature(botMarkerFeature);
   
   botMarkers.value = botMarkers.value.concat(botMarkerFeature);
   
@@ -549,16 +509,10 @@ function addBot(id: number, type: number, x: number, z: number, y: number) {
     ZPosition: z,
     YPosition: y
   })
-  
-  console.log(`addBot: ${id}, ${type}, ${x}, ${z}, ${y}`);
 }
 
-function removeBot(id: number) {
-  console.log(`removeBot: ${id}`);
-  
+function removeBot(id: number) {  
   const botToRemove = botMarkers.value.find(botMarker => botMarker.getProperties().BotId === id);
-  
-  console.log(botToRemove);
   
   for (let i = 0; i < currentBots.length; i++) {
     if (currentBots[i].BotId === id) {
@@ -585,10 +539,8 @@ function updateBot(id: number, x: number, z: number, y: number) {
 onMounted(() => {  
   changeMap("EnterARaid");
   
-  // mapDataFetch();
-  
-  // updateTimer = setInterval(mapDataFetch, mapDataUpdateInterval);
-  
+  setShowBots(localStorage.getItem("showBots") === "true");
+    
   shouldShowConnectPrompt.value = true;
 });
 </script>
@@ -632,10 +584,10 @@ onMounted(() => {
 <!--          title="Trash"-->
 <!--          :onToggle="(active: boolean) => changeDrawType(active, 'LineString')"-->
 <!--      />-->
-      <ol-zoomtoextent-control 
-          label="↕️"
-          tipLabel="Full map"
-      />
+<!--      <ol-zoomtoextent-control -->
+<!--          label="↕️"-->
+<!--          tipLabel="Full map"-->
+<!--      />-->
       <ol-toggle-control
           html="B"
           className="edit"
