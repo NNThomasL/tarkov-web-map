@@ -19,11 +19,12 @@ import sandbox_map_data from '../assets/map_data/sandbox_map_data.json';
 import map_not_implemented_data from '../assets/map_data/map_not_implemented_data.json';
 import enter_raid_data from '../assets/map_data/enter_raid_data.json';
 import type {FeatureLike} from "ol/Feature";
-import {Feature, View} from "ol";
+import {Feature, Overlay, View} from "ol";
 import {Point} from "ol/geom";
 import {Icon, Style} from "ol/style";
 import type VectorSource from "ol/source/Vector";
 import type VectorLayer from "ol/layer/Vector";
+import type {Coordinate} from "ol/coordinate";
 
 const gameMapNamesDict = {
   "bigmap": customs_loot_map_data,
@@ -41,6 +42,7 @@ const gameMapNamesDict = {
   "EnterARaid": enter_raid_data
 };
 
+const serverAddress = ref<string>("localhost:45365");
 let mapDataUpdateInterval = 250;
 let updateTimer: number;
 
@@ -64,13 +66,17 @@ let mapView = ref<View>();
 const center = ref([40, 40]);
 const zoom = ref(0);
 const minZoom = ref(0);
-const rotation = ref(0);
+const rotation = ref<number>(0);
 const extent = ref(currentMapData.bounds);
 
 const currentCenter = ref(center.value);
 const currentZoom = ref(zoom.value);
 const currentRotation = ref(rotation.value);
 const currentResolution = ref(0);
+
+const errorOverlayRef = ref<{ overlay: Overlay }>(null);
+const errorOverlayCoords = ref<Coordinate | null>(null);
+let shouldShowError = ref<boolean>(false);
 
 const drawEnable = ref(false);
 const drawType = ref("Point");
@@ -81,11 +87,15 @@ const botMarkerLayer = ref(null);
 const botMarkerSource = ref<{ source: VectorSource }>();
 const botMarkers = ref<FeatureLike[]>([]);
 let currentBots: Object[] = [];
+let showBots = false;
 
 let currentAirdrop: Object|null = null;
+const airdropMarker = ref<FeatureLike>(null);
 
 const questMarkers = ref<FeatureLike[]>([]);
+let lastQuestTimestamp = 0;
 
+// Player marker
 const playerMarkerFeature = new Feature({
   geometry: new Point([-300, -300]),
   name: 'Player 1',
@@ -105,6 +115,8 @@ playerMarkerFeature.setStyle(iconStyle);
 
 const playerMarker = ref<FeatureLike>(playerMarkerFeature);
 
+
+// Airdrop marker
 const airdropMarkerFeature = new Feature({
   geometry: new Point([-500, -500]),
   name: 'Airdrop',
@@ -122,8 +134,9 @@ const airdropMarkerStyle = new Style({
 
 airdropMarkerFeature.setStyle(airdropMarkerStyle);
 
-const airdropMarker = ref<FeatureLike>(airdropMarkerFeature);
+airdropMarker.value = airdropMarkerFeature;
 
+// Bot marker
 const botMarkerStyle = new Style({
   image: new Icon({
     anchor: [0.5, 0.5],
@@ -252,7 +265,25 @@ function changeMap(newMapString: string) {
   extent.value = currentMapData.bounds;
   extent.value = [currentMapData.bounds[2] * -0.1, currentMapData.bounds[2] * -0.1, currentMapData.bounds[2] * 1.1, currentMapData.bounds[3] * 1.1];
   
+  rotation.value = currentMapData.MapRotation * (Math.PI / 180);
+  
+  botMarkers.value.forEach(botMarker => {
+    removeBot(botMarker.getProperties().BotId);
+  });
+  
+  playerMarker.value?.getGeometry()?.setCoordinates([-1000, -1000]);
+  
   airdropMarker.value?.getGeometry()?.setCoordinates([-1000, -1000]);
+}
+
+function setShowBots(active: boolean) {
+  showBots = active;
+  
+  if (!active) {
+    botMarkers.value.forEach(botMarker => {
+      removeBot(botMarker.getProperties().BotId);
+    });
+  }
 }
 
 function setFollowPlayer(active: boolean) {
@@ -265,7 +296,7 @@ function setFollowPlayer(active: boolean) {
 
 async function mapDataFetch() {
   try {
-    const response = await fetch('http://localhost:45365/mapData');
+    const response = await fetch('http://' + serverAddress.value + '/mapData');
     const data = await response.json();
   
     console.log(data);
@@ -290,10 +321,19 @@ async function mapDataFetch() {
       return;
     }
     
+    // Load the new map on change
     if (data.MapName && data.MapName !== currentMapString) {
       changeMap(data.MapName);
     }
     
+    // Check if the quest data has changed
+    if (lastQuestTimestamp !== data.LastQuestChangeTime) {
+      await questDataFetch();
+      
+      lastQuestTimestamp = data.LastQuestChangeTime;
+    }
+    
+    // Update the player marker coordinates
     let {x, z} = adjustCoordinatesForMap(data.XPosition, data.ZPosition, data.YPosition);
     
     playerMarker.value?.getGeometry()?.setCoordinates([x, z]);
@@ -312,51 +352,63 @@ async function mapDataFetch() {
       addAirdrop(airdropX, airdropZ);
     }
   
-    // Add new bot markers
-    data.BotLocations?.forEach(bot => {
-      if (currentBots.find(item => item.BotId === bot.BotId) === undefined) {
-        // let x = calculatePolynomialValue(bot.xPosition, currentMapData.XCoefficients);
-        // let z = calculatePolynomialValue(bot.zPosition, currentMapData.ZCoefficients);
-  
-        let {x, z, y} = adjustCoordinatesForMap(bot.XPosition, bot.ZPosition, bot.YPosition);
-  
-        addBot(bot.BotId, bot.BotType, x, z, y);
-      }
-    });
-  
-    // Update or delete existing bot markers
-    currentBots.forEach(existingBot => {
-      if (data.BotLocations?.find(obj => obj.BotId === existingBot.BotId) === undefined) {
-        // Remove missing bot
-        removeBot(existingBot.BotId);
-      } else {
-        // Update existing bot
-        let foundBot = data.BotLocations?.find(obj => obj.BotId === existingBot.BotId);
-  
-        if (foundBot !== undefined) {
-          // let x = calculatePolynomialValue(existingBot.XPosition, currentMapData.XCoefficients);
-          // let z = calculatePolynomialValue(existingBot.ZPosition, currentMapData.ZCoefficients);
-  
-          let {x, z, y} = adjustCoordinatesForMap(foundBot.XPosition, foundBot.ZPosition, foundBot.YPosition);
-          
-          // let x = calculatePolynomialValue(foundBot.XPosition, currentMapData.XCoefficients);
-          // let z = calculatePolynomialValue(foundBot.ZPosition, currentMapData.ZCoefficients);
-          // let y = 1.0;
-          
-          updateBot(foundBot.BotId, x, z, y);
+    if (showBots) {
+      // Add new bot markers
+      data.BotLocations?.forEach(bot => {
+        if (currentBots.find(item => item.BotId === bot.BotId) === undefined) {
+          // let x = calculatePolynomialValue(bot.xPosition, currentMapData.XCoefficients);
+          // let z = calculatePolynomialValue(bot.zPosition, currentMapData.ZCoefficients);
+
+          let {x, z, y} = adjustCoordinatesForMap(bot.XPosition, bot.ZPosition, bot.YPosition);
+
+          addBot(bot.BotId, bot.BotType, x, z, y);
         }
-      }
-    });
+      });
+
+      // Update or delete existing bot markers
+      currentBots.forEach(existingBot => {
+        if (data.BotLocations?.find(obj => obj.BotId === existingBot.BotId) === undefined) {
+          // Remove missing bot
+          removeBot(existingBot.BotId);
+        } else {
+          // Update existing bot
+          let foundBot = data.BotLocations?.find(obj => obj.BotId === existingBot.BotId);
+
+          if (foundBot !== undefined) {
+            // let x = calculatePolynomialValue(existingBot.XPosition, currentMapData.XCoefficients);
+            // let z = calculatePolynomialValue(existingBot.ZPosition, currentMapData.ZCoefficients);
+
+            let {x, z, y} = adjustCoordinatesForMap(foundBot.XPosition, foundBot.ZPosition, foundBot.YPosition);
+
+            // let x = calculatePolynomialValue(foundBot.XPosition, currentMapData.XCoefficients);
+            // let z = calculatePolynomialValue(foundBot.ZPosition, currentMapData.ZCoefficients);
+            // let y = 1.0;
+
+            updateBot(foundBot.BotId, x, z, y);
+          }
+        }
+      });
+    }
   } catch (e) {
     if (e instanceof TypeError) {
       // Probably failed to connect
       clearInterval(updateTimer);
       
-      // TODO: Notify user of connection failure
+      console.error("Failed to connect to the mod's server");
+
+      shouldShowError.value = true;
+      errorOverlayCoords.value = [currentMapData.bounds[0] + currentMapData.bounds[2] / 2 - 30, currentMapData.bounds[1] + currentMapData.bounds[3] / 2];
     } else {
       console.error(e);
     }
   }
+}
+
+async function questDataFetch() {
+  const response = await fetch('http://' + serverAddress.value + '/questData');
+  const data = response.json();
+  
+  console.log(data);
 }
 
 function addAirdrop(x: number, z: number) {
@@ -392,11 +444,11 @@ function addBot(id: number, type: number, x: number, z: number, y: number) {
   // botMarkerFeature.setStyle(botMarkerStyle);
   
   
-  const source = botMarkerSource.value?.source;
-
-  source?.addFeature(botMarkerFeature);
+  // const source = botMarkerSource.value?.source;
+  //
+  // source?.addFeature(botMarkerFeature);
   
-  botMarkers.value.push(botMarkerFeature);
+  botMarkers.value = botMarkers.value.concat(botMarkerFeature);
   
   currentBots.push({
     BotId: id,
@@ -415,17 +467,31 @@ function removeBot(id: number) {
   //
   // source?.removeFeature(source.getFeatures().find(botMarker => botMarker.BotId === id));
   
-  currentBots = currentBots.filter(item => item.BotId !== id);
+  //currentBots = currentBots.filter(item => item.BotId !== id);
   
   // botMarkers.value = botMarkers.value.filter(botMarker => botMarker.BotId !== id);
   
   const botToRemove = botMarkers.value.find(botMarker => botMarker.getProperties().BotId === id);
   
   console.log(botToRemove);
-
-  botMarkerSource.value?.source.removeFeature(botToRemove);
   
-  // botMarkers.value = botMarkers.value.filtered(botMarker => botMarker.BotId !== id);
+  for (let i = 0; i < currentBots.length; i++) {
+    if (currentBots[i].BotId === id) {
+      currentBots.splice(i, 1);
+    }
+  }
+  
+  const newBotMarkerArray = [];
+  
+  for (let i = 0; i < botMarkers.value.length; i++) {
+    if (botMarkers.value[i].getProperties().BotId !== id) newBotMarkerArray.push(botMarkers.value[i]);
+  }
+  
+  botMarkers.value = newBotMarkerArray;
+
+  // botMarkerSource.value?.source.removeFeature(botToRemove);
+  
+  // botMarkers.value = botMarkers.value.filter(botMarker => botMarker.BotId !== id);
 }
 
 function updateBot(id: number, x: number, z: number, y: number) {
@@ -458,7 +524,7 @@ onMounted(() => {
         :zoom="zoom"
         :projection="projection"
         :extent="extent"
-        :enableRotation="false"
+        :enableRotation="true"
         :showFullExtent="true"
         :minZoom="minZoom"
         @change:center="centerChanged"
@@ -487,6 +553,12 @@ onMounted(() => {
       <ol-zoomtoextent-control 
           label="↕️"
           tipLabel="Full map"
+      />
+      <ol-toggle-control
+          html="B"
+          className="edit"
+          title="Show Bots"
+          :onToggle="(active: boolean) => setShowBots(active)"
       />
       <ol-toggle-control
           html="F"
@@ -581,6 +653,15 @@ onMounted(() => {
       </ol-style>
     </ol-interaction-select>
   </ol-map>
+  
+  <div
+      v-if="shouldShowError"
+      class="connection-error"
+  >
+    <span>Failed to connect to mod's server!</span>
+    <span>Make sure the game is running and firewall is not blocking it.</span>
+    <span>Then refresh the page.</span>
+  </div>
 </template>
 
 <style scoped>

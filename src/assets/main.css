@@ -10,6 +10,28 @@
   /*font-weight: normal;*/
 }
 
+.connection-error {
+  position: absolute;
+  top: 15%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: darkred;
+  font-size: 2rem;
+  font-weight: bolder;
+  max-width: 100%;
+  background-color: white;
+  padding: 1rem;
+  border-radius: 1.5rem;
+  
+  span {
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1.5rem;
+  }
+}
+
 /*a,*/
 /*.green {*/
 /*  text-decoration: none;*/
