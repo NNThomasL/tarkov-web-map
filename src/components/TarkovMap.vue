@@ -25,6 +25,8 @@ import {Icon, Style} from "ol/style";
 import type VectorSource from "ol/source/Vector";
 import type VectorLayer from "ol/layer/Vector";
 import type {Coordinate} from "ol/coordinate";
+import type Map from "ol/Map";
+import {Layer} from "ol/layer";
 
 const gameMapNamesDict = {
   "bigmap": customs_loot_map_data,
@@ -42,7 +44,9 @@ const gameMapNamesDict = {
   "EnterARaid": enter_raid_data
 };
 
-const serverAddress = ref<string>("localhost:45365");
+const shouldShowConnectPrompt = ref<boolean>(true);
+const serverAddress = ref<string>("127.0.0.1");
+const serverPort = ref<string>("45365");
 let mapDataUpdateInterval = 250;
 let updateTimer: number;
 
@@ -61,8 +65,12 @@ const selectConditions = inject("ol-selectconditions");
 
 const selectCondition = selectConditions.singleClick;
 
-let gameMap = ref(null);
-let mapView = ref<View>();
+const selectFilter = (feature: any) => {
+  return feature.getProperties()?.NameText !== undefined
+};
+
+const mapRef = ref<{ map: Map } | null>(null);
+const mapView = ref<View | null>(null);
 const center = ref([40, 40]);
 const zoom = ref(0);
 const minZoom = ref(0);
@@ -92,8 +100,16 @@ let showBots = false;
 let currentAirdrop: Object|null = null;
 const airdropMarker = ref<FeatureLike>(null);
 
+const questMarkerLayer = ref<{ layer: VectorLayer<VectorSource> } | null>(null);
+const questMarkerSource = ref<{ source: VectorSource } | null>(null);
 const questMarkers = ref<FeatureLike[]>([]);
+const questOverlayRef = ref<{ overlay: Overlay } | null>(null);
+const showQuestOverlay = ref<boolean>(true);
+const questName = ref<string>("");
+const questDescription = ref<string>("");
+const questOverlayCoordinates = ref<Coordinate | null>(null);
 let lastQuestTimestamp = 0;
+
 
 // Player marker
 const playerMarkerFeature = new Feature({
@@ -159,6 +175,33 @@ const bossBotMarkerStyle = new Style({
   }),
 });
 
+
+// Quest marker
+const questMarkerStyle = new Style({
+  image: new Icon({
+    anchor: [0.5, 0.5],
+    anchorXUnits: 'fraction',
+    anchorYUnits: 'fraction',
+    src: '/images/check-mark.png',
+    scale: 0.5
+  })
+});
+
+
+async function connectToServer() {
+  if (serverAddress.value === "") {
+    return;
+  }
+  
+  if (serverPort.value === "") {
+    return;
+  }
+
+  updateTimer = setInterval(mapDataFetch, mapDataUpdateInterval);
+  
+  shouldShowConnectPrompt.value = false;
+}
+
 function adjustCoordinatesForMap(x: number, z: number, y: number) {
   let returnedX = calculatePolynomialValue(x, currentMapData.XCoefficients);
   let returnedZ = calculatePolynomialValue(z, currentMapData.ZCoefficients);
@@ -211,6 +254,10 @@ function calculatePolynomialValue(x: number, coefficients: number[]) {
   return result;
 }
 
+function layerFilter(layerCandidate: Layer) {
+  return layerCandidate.getClassName().includes("feature-layer");
+}
+
 const changeDrawType = (active: boolean, draw: string) => {
   drawEnable.value = active;
   drawType.value = draw;
@@ -233,7 +280,31 @@ function centerChanged(event: any) {
 }
 
 const featureSelected = (event: any) => {
-  console.log(event);
+  // console.log(event);
+  try {
+
+    if (event.selected[0]) {
+      // console.log(event.selected[0].getProperties());
+
+      // mapRef.value?.map.addOverlay(questOverlayRef.value?.overlay);
+      // showQuestOverlay.value = true;
+      // questOverlayRef.value?.overlay.setPosition(event.selected[0].getGeometry().getCoordinates());
+      //
+      // console.log(mapRef.value?.map.getOverlays());
+
+      if (event.selected[0].getProperties()?.NameText !== undefined) {
+        showQuestOverlay.value = true;
+        questOverlayCoordinates.value = event.selected[0].getGeometry().getCoordinates();
+        questName.value = event.selected[0].getProperties().NameText || "error loading quest name";
+        questDescription.value = event.selected[0].getProperties().Description;
+      }
+    } else {
+      showQuestOverlay.value = false;
+    }
+  }
+  catch (e) {
+    console.log(e);
+  }
 };
 
 const selectInteactionFilter = (feature: any) => {
@@ -296,10 +367,10 @@ function setFollowPlayer(active: boolean) {
 
 async function mapDataFetch() {
   try {
-    const response = await fetch('http://' + serverAddress.value + '/mapData');
+    const response = await fetch('http://' + serverAddress.value + ':' + serverPort.value + '/mapData');
     const data = await response.json();
   
-    console.log(data);
+    // console.log(data);
     
     // if (data?.MapName === undefined || data.MapName === currentMapString) {
     //   return;
@@ -398,6 +469,10 @@ async function mapDataFetch() {
 
       shouldShowError.value = true;
       errorOverlayCoords.value = [currentMapData.bounds[0] + currentMapData.bounds[2] / 2 - 30, currentMapData.bounds[1] + currentMapData.bounds[3] / 2];
+      
+      shouldShowConnectPrompt.value = true;
+      
+      clearInterval(updateTimer);
     } else {
       console.error(e);
     }
@@ -405,10 +480,28 @@ async function mapDataFetch() {
 }
 
 async function questDataFetch() {
-  const response = await fetch('http://' + serverAddress.value + '/questData');
-  const data = response.json();
+  const response = await fetch('http://' + serverAddress.value + ':' + serverPort.value + '/quests');
+  const data = await response.json();
   
-  console.log(data);
+  // console.log(data);
+  
+  questMarkers.value = [];
+  
+  data.Quests.forEach(quest => {
+    let x = calculatePolynomialValue(quest.Location.X, currentMapData.XCoefficients);
+    let z = calculatePolynomialValue(quest.Location.Z, currentMapData.ZCoefficients);
+    
+    let marker = new Feature({
+      geometry: new Point([x, z]),
+      NameText: quest.NameText,
+      Description: quest.Description,
+      Trader: quest.Trader
+    });
+    
+    marker.setStyle(questMarkerStyle);
+    
+    questMarkers.value.push(marker);
+  });
 }
 
 function addAirdrop(x: number, z: number) {
@@ -462,14 +555,6 @@ function addBot(id: number, type: number, x: number, z: number, y: number) {
 
 function removeBot(id: number) {
   console.log(`removeBot: ${id}`);
-
-  // const source = botMarkerSource.value?.source;
-  //
-  // source?.removeFeature(source.getFeatures().find(botMarker => botMarker.BotId === id));
-  
-  //currentBots = currentBots.filter(item => item.BotId !== id);
-  
-  // botMarkers.value = botMarkers.value.filter(botMarker => botMarker.BotId !== id);
   
   const botToRemove = botMarkers.value.find(botMarker => botMarker.getProperties().BotId === id);
   
@@ -488,26 +573,23 @@ function removeBot(id: number) {
   }
   
   botMarkers.value = newBotMarkerArray;
-
-  // botMarkerSource.value?.source.removeFeature(botToRemove);
-  
-  // botMarkers.value = botMarkers.value.filter(botMarker => botMarker.BotId !== id);
 }
 
 function updateBot(id: number, x: number, z: number, y: number) {
-  // console.log(`updateBot: ${id}, ${x}, ${z}, ${y}`);
-
   const foundBot = botMarkers.value.find(botMarker => botMarker.getProperties().BotId === id);
   
-  foundBot?.getGeometry().setCoordinates([x, z]);
+  foundBot?.getGeometry()?.setCoordinates([x, z]);
 }
 
-onMounted(() => {
+// Init
+onMounted(() => {  
   changeMap("EnterARaid");
   
-  mapDataFetch();
+  // mapDataFetch();
   
-  updateTimer = setInterval(mapDataFetch, mapDataUpdateInterval);
+  // updateTimer = setInterval(mapDataFetch, mapDataUpdateInterval);
+  
+  shouldShowConnectPrompt.value = true;
 });
 </script>
 
@@ -574,6 +656,13 @@ onMounted(() => {
 <!--        @drawstart="drawstart"-->
 <!--    >-->
 <!--    </ol-interaction-draw>-->
+    
+    <ol-interaction-select
+      @select="featureSelected"
+      :condition="selectCondition"
+      :layers="questMarkerLayer"
+      :filter="selectFilter"
+    ></ol-interaction-select>
 
     <ol-image-layer id="tarkovMap">
       <ol-source-image-static
@@ -583,77 +672,45 @@ onMounted(() => {
       ></ol-source-image-static>
     </ol-image-layer>
 
-<!--    <ol-vector-layer>-->
-<!--      <ol-source-vector :projection="projection">-->
-<!--        <ol-interaction-draw-->
-<!--            v-if="drawEnable"-->
-<!--            :type="drawType"-->
-<!--            @drawend="drawend"-->
-<!--            @drawstart="drawstart"-->
-<!--        >-->
-<!--          <ol-style>-->
-<!--            <ol-style-stroke color="blue" :width="2"></ol-style-stroke>-->
-<!--            <ol-style-fill color="rgba(255, 255, 0, 0.4)"></ol-style-fill>-->
-<!--          </ol-style>-->
-<!--        </ol-interaction-draw>-->
-<!--      </ol-source-vector>-->
-
-<!--      <ol-style>-->
-<!--        <ol-style-stroke color="red" :width="2"></ol-style-stroke>-->
-<!--        <ol-style-fill color="rgba(255,255,255,0.1)"></ol-style-fill>-->
-<!--        <ol-style-circle :radius="7">-->
-<!--          <ol-style-fill color="red"></ol-style-fill>-->
-<!--        </ol-style-circle>-->
-<!--      </ol-style>-->
-<!--    </ol-vector-layer>-->
-
     <ol-vector-layer>
       <ol-source-vector :features="[playerMarker]" />
-      
-<!--      <ol-style>-->
-<!--        <ol-style-icon :src="playerIcon" :scale="3"></ol-style-icon>-->
-<!--      </ol-style>-->
     </ol-vector-layer>
 
     <ol-vector-layer>
       <ol-source-vector :features="[airdropMarker]" />
-
-<!--      <ol-style>-->
-<!--        <ol-style-icon :src="airdropIcon" :scale="3"></ol-style-icon>-->
-<!--      </ol-style>-->
     </ol-vector-layer>
 
     <ol-vector-layer ref="botMarkerLayer">
       <ol-source-vector ref="botMarkerSource" :features="botMarkers" />
-
-<!--      <ol-style>-->
-<!--        <ol-style-icon :src="botIcon" :scale="3"></ol-style-icon>-->
-<!--      </ol-style>-->
     </ol-vector-layer>
 
-    <ol-vector-layer ref="questMarkerLayer">
+    <ol-vector-layer name="Quests" ref="questMarkerLayer">
       <ol-source-vector ref="questMarkerSource" :features="questMarkers" />
-
-      <!--      <ol-style>-->
-      <!--        <ol-style-icon :src="botIcon" :scale="3"></ol-style-icon>-->
-      <!--      </ol-style>-->
     </ol-vector-layer>
 
-    <ol-interaction-select
-        @select="featureSelected"
-        :condition="selectCondition"
-        :filter="selectInteactionFilter"
+    <ol-overlay
+        ref="questOverlayRef"
+        v-if="showQuestOverlay"
+        :position="questOverlayCoordinates"
     >
-      <ol-style>
-        <ol-style-stroke color="green" :width="10"></ol-style-stroke>
-        <ol-style-fill color="rgba(255,255,255,0.5)"></ol-style-fill>
-        <ol-style-circle :radius="7">
-          <ol-style-fill color="blue"></ol-style-fill>
-        </ol-style-circle>
-      </ol-style>
-    </ol-interaction-select>
+      <div class="quest-overlay">
+        <div class="quest-overlay__name">{{ questName }}</div>
+        <div class="quest-overlay__description">{{ questDescription }}</div>
+      </div>
+    </ol-overlay>
   </ol-map>
   
+  <div
+      v-if="shouldShowConnectPrompt"
+      class="connection-prompt-box"
+  >
+    <div>Input server address</div>
+    <div class="input-box"><span>IPV4 Address: <a href="https://support.microsoft.com/en-us/windows/find-your-ip-address-in-windows-f21a9bbc-c582-55cd-35e0-73431160a1b9#Category=Windows_10" target="_blank">?</a></span><input v-model="serverAddress"></div>
+    <div class="input-box"><span>Port:</span><input v-model="serverPort"></div>
+    <button @click="connectToServer">Connect</button>
+  </div>
+    
+    
   <div
       v-if="shouldShowError"
       class="connection-error"
