@@ -46,12 +46,12 @@ const gameMapNamesDict = {
 
 const shouldShowConnectPrompt = ref<boolean>(true);
 const serverAddress = ref<string>("127.0.0.1");
-const serverPort = ref<string>("45365");
+const serverPort = ref<string>("45366");
 let mapDataUpdateInterval = 250;
 let updateTimer: number;
 
 let currentMapString = "map_not_implemented";
-let currentMapData = map_not_implemented_data;
+let currentMapData: any = map_not_implemented_data;
 let mapUrl = ref("maps/" + currentMapData.MapImageFile);
 let mapImageExtent = ref(currentMapData.bounds);
 
@@ -82,7 +82,7 @@ const currentZoom = ref(zoom.value);
 const currentRotation = ref(rotation.value);
 const currentResolution = ref(0);
 
-const errorOverlayRef = ref<{ overlay: Overlay }>(null);
+const errorOverlayRef = ref<{ overlay: Overlay } | null>(null);
 const errorOverlayCoords = ref<Coordinate | null>(null);
 let shouldShowError = ref<boolean>(false);
 
@@ -98,7 +98,7 @@ let currentBots: Object[] = [];
 let showBots = false;
 
 let currentAirdrop: Object|null = null;
-const airdropMarker = ref<FeatureLike>(null);
+const airdropMarker = ref<FeatureLike | null>(null);
 
 const questMarkerLayer = ref<{ layer: VectorLayer<VectorSource> } | null>(null);
 const questMarkerSource = ref<{ source: VectorSource } | null>(null);
@@ -189,14 +189,6 @@ const questMarkerStyle = new Style({
 
 
 async function connectToServer() {
-  if (serverAddress.value === "") {
-    return;
-  }
-  
-  if (serverPort.value === "") {
-    return;
-  }
-
   updateTimer = setInterval(mapDataFetch, mapDataUpdateInterval);
   
   shouldShowConnectPrompt.value = false;
@@ -320,10 +312,12 @@ function changeMap(newMapString: string) {
   botMarkers.value.forEach(botMarker => {
     removeBot(botMarker.getProperties().BotId);
   });
-  
-  playerMarker.value?.getGeometry()?.setCoordinates([-1000, -1000]);
-  
-  airdropMarker.value?.getGeometry()?.setCoordinates([-1000, -1000]);
+
+  // TODO: Fix this any type
+  (playerMarker.value?.getGeometry() as any)?.setCoordinates([-1000, -1000]);
+
+  // TODO: Fix this any type
+  (airdropMarker.value?.getGeometry() as any)?.setCoordinates([-1000, -1000]);
 }
 
 function setShowBots(active: boolean) {
@@ -364,9 +358,11 @@ async function mapDataFetch() {
       if (currentMapString !== "EnterARaid") {
         changeMap("EnterARaid");
 
-        playerMarker.value?.getGeometry()?.setCoordinates([-1000, -1000]);
+        // TODO: Fix this any type
+        (playerMarker.value?.getGeometry() as any)?.setCoordinates([-1000, -1000]);
 
-        airdropMarker.value?.getGeometry()?.setCoordinates([-1000, -1000]);
+        // TODO: Fix this any type
+        (airdropMarker.value?.getGeometry() as any)?.setCoordinates([-1000, -1000]);
         
         botMarkers.value.forEach(botMarker => {
           removeBot(botMarker.getProperties().BotId);
@@ -390,9 +386,12 @@ async function mapDataFetch() {
     
     // Update the player marker coordinates
     let {x, z} = adjustCoordinatesForMap(data.XPosition, data.ZPosition, data.YPosition);
-    
-    playerMarker.value?.getGeometry()?.setCoordinates([x, z]);
-    playerMarker.value?.getStyle().getImage().setRotation((currentMapData.MapRotation + data.XRotation) * (Math.PI / 180));
+
+    // TODO: Fix this any type
+    (playerMarker.value?.getGeometry() as any)?.setCoordinates([x, z]);
+
+    // TODO: Fix this any type
+    (playerMarker.value as any)?.getStyle().getImage().setRotation((currentMapData.MapRotation + data.XRotation) * (Math.PI / 180));
 
     if (followPlayer.value) {
       mapView.value?.setCenter([x, z]);
@@ -409,8 +408,9 @@ async function mapDataFetch() {
   
     if (showBots) {
       // Add new bot markers
-      data.BotLocations?.forEach(bot => {
-        if (currentBots.find(item => item.BotId === bot.BotId) === undefined) {
+      // TODO: Fix this any type
+      data.BotLocations?.forEach((bot: any) => {
+        if (currentBots.find((item: any) => item.BotId === bot.BotId) === undefined) {
           // let x = calculatePolynomialValue(bot.xPosition, currentMapData.XCoefficients);
           // let z = calculatePolynomialValue(bot.zPosition, currentMapData.ZCoefficients);
 
@@ -421,13 +421,14 @@ async function mapDataFetch() {
       });
 
       // Update or delete existing bot markers
-      currentBots.forEach(existingBot => {
-        if (data.BotLocations?.find(obj => obj.BotId === existingBot.BotId) === undefined) {
+      // TODO: Fix these any types
+      currentBots.forEach((existingBot: any) => {
+        if (data.BotLocations?.find((obj: any) => obj.BotId === existingBot.BotId) === undefined) {
           // Remove missing bot
           removeBot(existingBot.BotId);
         } else {
           // Update existing bot
-          let foundBot = data.BotLocations?.find(obj => obj.BotId === existingBot.BotId);
+          let foundBot = data.BotLocations?.find((obj: any) => obj.BotId === existingBot.BotId);
 
           if (foundBot !== undefined) {
 
@@ -462,8 +463,9 @@ async function questDataFetch() {
   const data = await response.json();
   
   questMarkers.value = [];
-  
-  data.Quests.forEach(quest => {
+
+  // TODO: Fix this any type
+  data.Quests.forEach((quest: any) => {
     let x = calculatePolynomialValue(quest.Location.X, currentMapData.XCoefficients);
     let z = calculatePolynomialValue(quest.Location.Z, currentMapData.ZCoefficients);
     
@@ -487,8 +489,9 @@ function addAirdrop(x: number, z: number) {
     x,
     z
   };
-  
-  airdropMarker.value?.getGeometry()?.setCoordinates([x, z]);
+
+  // TODO: Fix this any type
+  (airdropMarker.value?.getGeometry() as any)?.setCoordinates([x, z]);
 }
 
 function addBot(id: number, type: number, x: number, z: number, y: number) {
@@ -525,7 +528,7 @@ function removeBot(id: number) {
   const botToRemove = botMarkers.value.find(botMarker => botMarker.getProperties().BotId === id);
   
   for (let i = 0; i < currentBots.length; i++) {
-    if (currentBots[i].BotId === id) {
+    if ((currentBots[i] as any).BotId === id) {
       currentBots.splice(i, 1);
     }
   }
@@ -541,8 +544,8 @@ function removeBot(id: number) {
 
 function updateBot(id: number, x: number, z: number, y: number) {
   const foundBot = botMarkers.value.find(botMarker => botMarker.getProperties().BotId === id);
-  
-  foundBot?.getGeometry()?.setCoordinates([x, z]);
+
+  (foundBot?.getGeometry() as any)?.setCoordinates([x, z]);
 }
 
 // Init
@@ -552,11 +555,11 @@ onMounted(() => {
   setShowBots(localStorage.getItem("showBots") === "true");
   
   if (localStorage.getItem("serverPort") != null) {
-    serverPort.value = localStorage.getItem("serverPort");
+    serverPort.value = localStorage.getItem("serverPort") || "45366";
   }
   
   if (localStorage.getItem("serverAddress") != null) {
-    serverAddress.value = localStorage.getItem("serverAddress");
+    serverAddress.value = localStorage.getItem("serverAddress") || "127.0.0.1";
   }
     
   shouldShowConnectPrompt.value = true;
@@ -608,13 +611,12 @@ onMounted(() => {
 <!--      />-->
       <ol-toggle-control
           html="Bots"
-          className="edit"
           title="Show Bots"
+          :className="showBots ? 'custom-ol-active' : ''"
           :onToggle="(active: boolean) => setShowBots(active)"
       />
       <ol-toggle-control
           html="Follow"
-          className="edit"
           title="Follow Player"
           :onToggle="(active: boolean) => setFollowPlayer(active)"
       />
@@ -687,10 +689,9 @@ onMounted(() => {
   >
     <span>Failed to connect to mod's server!</span>
     <span>Make sure the game is running and firewall is not blocking it.</span>
-    <span>Then refresh the page.</span>
   </div>
 </template>
 
 <style scoped>
-
+  
 </style>

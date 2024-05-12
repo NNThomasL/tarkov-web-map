@@ -11,6 +11,6 @@
     -6.159675146789232
   ],
   "bounds": [ 0, 0, 7620, 5877 ],
-  "initialZoom": 0,
-  "minZoom": -1
+  "initialZoom": -1,
+  "minZoom": -2
 }

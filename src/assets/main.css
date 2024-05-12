@@ -12,9 +12,16 @@
 
 .ol-control.ol-bar {
   width: fit-content;
-  
+
   button {
     width: 7rem;
+  }
+}
+
+.custom-ol-active {
+
+  button {
+    /*background-color: #00AAFF !important;*/
   }
 }
 
@@ -29,6 +36,7 @@
   text-align: center;
   font-size: 2rem;
   padding: 0.8rem;
+  max-width: 35rem;
 
   @media (max-width: 768px) {
     width: 100%;
@@ -37,21 +45,22 @@
   @media (min-width: 768px) {
     left: 50%;
     transform: translateX(-50%);
+    width: 60%;
   }
   
   .input-box {
     display: flex;
     flex-direction: row;
     justify-content: space-between;
-    font-size: 1.5rem;
+    font-size: 1.3rem;
     width: 100%;
     margin-top: 0.3rem;
     
     input {
       margin-left: 1rem;
       margin-right: 1rem;
-      width: 60%;
-      font-size: 1.5rem;
+      width: 45%;
+      font-size: 1.2rem;
     }
   }  
   
