@@ -281,7 +281,6 @@ function centerChanged(event: any) {
 
 const featureSelected = (event: any) => {  
   if (event.selected[0]) {
-
     if (event.selected[0].getProperties()?.NameText !== undefined) {
       showQuestOverlay.value = true;
       questOverlayCoordinates.value = event.selected[0].getGeometry().getCoordinates();
@@ -313,6 +312,8 @@ function changeMap(newMapString: string) {
   
   extent.value = currentMapData.bounds;
   extent.value = [currentMapData.bounds[2] * -0.1, currentMapData.bounds[2] * -0.1, currentMapData.bounds[2] * 1.1, currentMapData.bounds[3] * 1.1];
+  
+  zoom.value = currentMapData.initialZoom;
   
   rotation.value = currentMapData.MapRotation * (Math.PI / 180);
   
@@ -349,6 +350,15 @@ async function mapDataFetch() {
   try {
     const response = await fetch('http://' + serverAddress.value + ':' + serverPort.value + '/mapData');
     const data = await response.json();
+    
+    if (response.status === 200) {
+      // Hide the error message overlay if it's visible
+      if (shouldShowError.value) shouldShowError.value = false;
+      
+      // Update the server address and port in localStorage
+      localStorage.setItem("serverAddress", serverAddress.value);
+      localStorage.setItem("serverPort", serverPort.value);
+    }
     
     if (data.IsGameInProgress === false) {
       if (currentMapString !== "EnterARaid") {
@@ -540,6 +550,14 @@ onMounted(() => {
   changeMap("EnterARaid");
   
   setShowBots(localStorage.getItem("showBots") === "true");
+  
+  if (localStorage.getItem("serverPort") != null) {
+    serverPort.value = localStorage.getItem("serverPort");
+  }
+  
+  if (localStorage.getItem("serverAddress") != null) {
+    serverAddress.value = localStorage.getItem("serverAddress");
+  }
     
   shouldShowConnectPrompt.value = true;
 });
@@ -565,7 +583,7 @@ onMounted(() => {
         @change:resolution="resolutionChanged"
     />
 
-    <ol-control-bar>
+    <ol-control-bar v-if="!shouldShowConnectPrompt">
 <!--      <ol-toggle-control-->
 <!--          html="🟢"-->
 <!--          className="edit"-->
@@ -589,13 +607,13 @@ onMounted(() => {
 <!--          tipLabel="Full map"-->
 <!--      />-->
       <ol-toggle-control
-          html="B"
+          html="Bots"
           className="edit"
           title="Show Bots"
           :onToggle="(active: boolean) => setShowBots(active)"
       />
       <ol-toggle-control
-          html="F"
+          html="Follow"
           className="edit"
           title="Follow Player"
           :onToggle="(active: boolean) => setFollowPlayer(active)"
@@ -657,8 +675,8 @@ onMounted(() => {
       class="connection-prompt-box"
   >
     <div>Input server address</div>
-    <div class="input-box"><span>IPV4 Address: <a href="https://support.microsoft.com/en-us/windows/find-your-ip-address-in-windows-f21a9bbc-c582-55cd-35e0-73431160a1b9#Category=Windows_10" target="_blank">?</a></span><input v-model="serverAddress"></div>
-    <div class="input-box"><span>Port:</span><input v-model="serverPort"></div>
+    <div class="input-box"><span>IPV4 Address: <a href="https://support.microsoft.com/en-us/windows/find-your-ip-address-in-windows-f21a9bbc-c582-55cd-35e0-73431160a1b9#Category=Windows_10" target="_blank">?</a></span><input v-model="serverAddress" placeholder="127.0.0.1"></div>
+    <div class="input-box"><span>Port:</span><input v-model="serverPort" placeholder="45365"></div>
     <button @click="connectToServer">Connect</button>
   </div>
     
