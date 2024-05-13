@@ -1,10 +1,7 @@
 ﻿<script setup lang="ts">
 import {inject, onMounted, type Ref, ref} from "vue";
 import {Projection} from "ol/proj";
-
-import playerIcon from '@/assets/images/plain-arrow.png';
-import airdropIcon from '@/assets/images/airdrop.png';
-import botIcon from '@/assets/images/bot.png';
+import VueQrcode from '@chenfengyuan/vue-qrcode';
 
 import streets_of_tarkov_map_data from '../assets/map_data/streets_of_tarkov_map_data.json';
 import customs_loot_map_data from '../assets/map_data/customs_loot_map_data.json';
@@ -47,6 +44,8 @@ const gameMapNamesDict = {
 const shouldShowConnectPrompt = ref<boolean>(true);
 const serverAddress = ref<string>("127.0.0.1");
 const serverPort = ref<string>("45366");
+const qrCodeAddress = ref<string>("");
+const showQrCode = ref<boolean>(false);
 let mapDataUpdateInterval = 250;
 let updateTimer: number;
 
@@ -482,6 +481,21 @@ async function questDataFetch() {
   });
 }
 
+async function getQRCodeAddress() {
+  const response = await fetch('/address');
+  const data = await response.text();
+  
+  let addressToUse = data;
+  
+  addressToUse;
+  
+  // if (addressToUse.length > 29) {
+  //   addressToUse = 'ERROR';
+  // }
+  
+  qrCodeAddress.value = addressToUse;
+}
+
 function addAirdrop(x: number, z: number) {
   console.log(`addAirdrop: ${x}, ${z}`);
 
@@ -549,7 +563,12 @@ function updateBot(id: number, x: number, z: number, y: number) {
 }
 
 // Init
-onMounted(() => {  
+onMounted(() => {
+  let params = new URL(document.location.toString()).searchParams;
+  
+  serverAddress.value = params.get("serverAddress") || "127.0.0.1";
+  serverPort.value = params.get("serverPort") || "45366";
+  
   changeMap("EnterARaid");
   
   setShowBots(localStorage.getItem("showBots") === "true");
@@ -561,7 +580,9 @@ onMounted(() => {
   if (localStorage.getItem("serverAddress") != null) {
     serverAddress.value = localStorage.getItem("serverAddress") || "127.0.0.1";
   }
-    
+  
+  getQRCodeAddress();
+  
   shouldShowConnectPrompt.value = true;
 });
 </script>
@@ -619,6 +640,12 @@ onMounted(() => {
           html="Follow"
           title="Follow Player"
           :onToggle="(active: boolean) => setFollowPlayer(active)"
+      />
+      <ol-toggle-control
+          html="QR"
+          title="QR"
+          className="qr-button"
+          :onToggle="(active: boolean) => showQrCode = active"
       />
     </ol-control-bar>
 
@@ -689,6 +716,14 @@ onMounted(() => {
   >
     <span>Failed to connect to mod's server!</span>
     <span>Make sure the game is running and firewall is not blocking it.</span>
+  </div>
+  
+  <div v-if="showQrCode" class="qr-code-container">
+    <div v-if="qrCodeAddress !== 'ERROR'">
+      <VueQrcode :value="qrCodeAddress" :options="{ width: 260 }" class="qr-code"></VueQrcode>
+      <div>{{ serverAddress }}:{{ serverPort }}</div>
+    </div>
+    <div v-if="qrCodeAddress === 'ERROR'">Error getting address!</div>
   </div>
 </template>
 

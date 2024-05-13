@@ -13,10 +13,12 @@
     "format": "prettier --write src/"
   },
   "dependencies": {
+    "@chenfengyuan/vue-qrcode": "2",
     "ol": "^9.1.0",
     "ol-contextmenu": "^5.4.0",
     "ol-ext": "^4.0.18",
     "pinia": "^2.1.7",
+    "qrcode": "1",
     "vue": "^3.4.21",
     "vue3-openlayers": "^8.1.0"
   },
