@@ -23,7 +23,6 @@ import type VectorSource from "ol/source/Vector";
 import type VectorLayer from "ol/layer/Vector";
 import type {Coordinate} from "ol/coordinate";
 import type Map from "ol/Map";
-import {Layer} from "ol/layer";
 
 const gameMapNamesDict = {
   "bigmap": customs_loot_map_data,
@@ -42,8 +41,10 @@ const gameMapNamesDict = {
 };
 
 const shouldShowConnectPrompt = ref<boolean>(true);
-const serverAddress = ref<string>("127.0.0.1");
-const serverPort = ref<string>("45366");
+const serverAddress = ref<string | null>("127.0.0.1");
+const serverPort = ref<string | null>("45366");
+let savedServerAddress = ref<string | null>();
+let savedServerPort = ref<string | null>();
 const qrCodeAddress = ref<string>("");
 const showQrCode = ref<boolean>(false);
 let mapDataUpdateInterval = 250;
@@ -94,7 +95,7 @@ const botMarkerLayer = ref(null);
 const botMarkerSource = ref<{ source: VectorSource }>();
 const botMarkers = ref<FeatureLike[]>([]);
 let currentBots: Object[] = [];
-let showBots = false;
+let showBots = ref<boolean>(false);
 
 let currentAirdrop: Object|null = null;
 const airdropMarker = ref<FeatureLike | null>(null);
@@ -187,12 +188,23 @@ const questMarkerStyle = new Style({
 });
 
 
-async function connectToServer() {
+async function connectToServer(useLastConnectionInfo: boolean) {
+  if (useLastConnectionInfo) {
+    serverAddress.value = localStorage.getItem('serverAddress');
+    serverPort.value = localStorage.getItem('serverPort');
+  } else {
+    localStorage.setItem('serverAddress', serverAddress.value || '');
+    localStorage.setItem('serverPort', serverPort.value || '');
+  }
+
+  getQRCodeAddress();
+  
   updateTimer = setInterval(mapDataFetch, mapDataUpdateInterval);
   
   shouldShowConnectPrompt.value = false;
 }
 
+//TODO: Make the bounding boxes for areas use JSON objects saved to each map. Reference CactusPie's JSON files.
 function adjustCoordinatesForMap(x: number, z: number, y: number) {
   let returnedX = calculatePolynomialValue(x, currentMapData.XCoefficients);
   let returnedZ = calculatePolynomialValue(z, currentMapData.ZCoefficients);
@@ -245,23 +257,6 @@ function calculatePolynomialValue(x: number, coefficients: number[]) {
   return result;
 }
 
-function layerFilter(layerCandidate: Layer) {
-  return layerCandidate.getClassName().includes("feature-layer");
-}
-
-const changeDrawType = (active: boolean, draw: string) => {
-  drawEnable.value = active;
-  drawType.value = draw;
-};
-
-const drawstart = (event: any) => {
-  console.log(event);
-};
-
-const drawend = (event: any) => {
-  console.log(event);
-};
-
 function resolutionChanged(event: any) {
   currentResolution.value = event.target.getResolution();
   currentZoom.value = event.target.getZoom();
@@ -281,10 +276,6 @@ const featureSelected = (event: any) => {
   } else {
     showQuestOverlay.value = false;
   }
-};
-
-const selectInteactionFilter = (feature: any) => {
-  return feature.values_.name != undefined;
 };
 
 function changeMap(newMapString: string) {
@@ -320,7 +311,7 @@ function changeMap(newMapString: string) {
 }
 
 function setShowBots(active: boolean) {
-  showBots = active;
+  showBots.value = active;
 
   localStorage.setItem("showBots", active.toString());
   
@@ -329,6 +320,22 @@ function setShowBots(active: boolean) {
       removeBot(botMarker.getProperties().BotId);
     });
   }
+}
+
+function toggleShowBots() {
+  showBots.value = !showBots.value;
+  
+  if (showBots.value) {
+    console.log('Enabled showing of bots.');
+  } else {
+    botMarkers.value.forEach(botMarker => {
+      removeBot(botMarker.getProperties().BotId);
+    });
+    
+    console.log('Disabled showing of bots.');
+  }
+
+  localStorage.setItem("showBots", showBots.value.toString());
 }
 
 function setFollowPlayer(active: boolean) {
@@ -348,9 +355,13 @@ async function mapDataFetch() {
       // Hide the error message overlay if it's visible
       if (shouldShowError.value) shouldShowError.value = false;
       
-      // Update the server address and port in localStorage
-      localStorage.setItem("serverAddress", serverAddress.value);
-      localStorage.setItem("serverPort", serverPort.value);
+      // if (!updatedConnectionStorageThisSession) {
+      //   // Update the server address and port in localStorage
+      //   localStorage.setItem("serverAddress", serverAddress.value);
+      //   localStorage.setItem("serverPort", serverPort.value);
+      //
+      //   updatedConnectionStorageThisSession = true;
+      // }
     }
     
     if (data.IsGameInProgress === false) {
@@ -393,6 +404,11 @@ async function mapDataFetch() {
     (playerMarker.value as any)?.getStyle().getImage().setRotation((currentMapData.MapRotation + data.XRotation) * (Math.PI / 180));
 
     if (followPlayer.value) {
+      // mapView.value?.animate({
+      //   center: [x, z],
+      //   duration: 1000,
+      // });
+      
       mapView.value?.setCenter([x, z]);
     }
     
@@ -405,7 +421,7 @@ async function mapDataFetch() {
       addAirdrop(airdropX, airdropZ);
     }
   
-    if (showBots) {
+    if (showBots.value) {
       // Add new bot markers
       // TODO: Fix this any type
       data.BotLocations?.forEach((bot: any) => {
@@ -487,7 +503,7 @@ async function getQRCodeAddress() {
   
   let addressToUse = data;
   
-  addressToUse;
+  addressToUse = 'http://' + serverAddress.value + ':' + serverPort.value;
   
   // if (addressToUse.length > 29) {
   //   addressToUse = 'ERROR';
@@ -566,22 +582,22 @@ function updateBot(id: number, x: number, z: number, y: number) {
 onMounted(() => {
   let params = new URL(document.location.toString()).searchParams;
   
+  if (params.get('serverAddress') && params.get('serverPort')) {
+    serverAddress.value = params.get('serverAddress');
+    serverPort.value = params.get('serverPort');
+  }
+  
   serverAddress.value = params.get("serverAddress") || "127.0.0.1";
   serverPort.value = params.get("serverPort") || "45366";
+  
+  savedServerAddress.value = localStorage.getItem('serverAddress');
+  savedServerPort.value = localStorage.getItem('serverPort');
+  
+  console.log(serverAddress.value + ':' + serverPort.value);
   
   changeMap("EnterARaid");
   
   setShowBots(localStorage.getItem("showBots") === "true");
-  
-  if (localStorage.getItem("serverPort") != null) {
-    serverPort.value = localStorage.getItem("serverPort") || "45366";
-  }
-  
-  if (localStorage.getItem("serverAddress") != null) {
-    serverAddress.value = localStorage.getItem("serverAddress") || "127.0.0.1";
-  }
-  
-  getQRCodeAddress();
   
   shouldShowConnectPrompt.value = true;
 });
@@ -607,47 +623,47 @@ onMounted(() => {
         @change:resolution="resolutionChanged"
     />
 
-    <ol-control-bar v-if="!shouldShowConnectPrompt">
+<!--    <ol-control-bar v-if="!shouldShowConnectPrompt">-->
+<!--&lt;!&ndash;      <ol-toggle-control&ndash;&gt;-->
+<!--&lt;!&ndash;          html="🟢"&ndash;&gt;-->
+<!--&lt;!&ndash;          className="edit"&ndash;&gt;-->
+<!--&lt;!&ndash;          title="Circle"&ndash;&gt;-->
+<!--&lt;!&ndash;          :onToggle="(active: boolean) => changeDrawType(active, 'Circle')"&ndash;&gt;-->
+<!--&lt;!&ndash;      />&ndash;&gt;-->
+<!--&lt;!&ndash;      <ol-toggle-control&ndash;&gt;-->
+<!--&lt;!&ndash;          html="〰️"&ndash;&gt;-->
+<!--&lt;!&ndash;          className="edit"&ndash;&gt;-->
+<!--&lt;!&ndash;          title="Line (double click to finish)"&ndash;&gt;-->
+<!--&lt;!&ndash;          :onToggle="(active: boolean) => changeDrawType(active, 'LineString')"&ndash;&gt;-->
+<!--&lt;!&ndash;      />&ndash;&gt;-->
+<!--&lt;!&ndash;      <ol-toggle-control&ndash;&gt;-->
+<!--&lt;!&ndash;          html="〰️"&ndash;&gt;-->
+<!--&lt;!&ndash;          className="edit"&ndash;&gt;-->
+<!--&lt;!&ndash;          title="Trash"&ndash;&gt;-->
+<!--&lt;!&ndash;          :onToggle="(active: boolean) => changeDrawType(active, 'LineString')"&ndash;&gt;-->
+<!--&lt;!&ndash;      />&ndash;&gt;-->
+<!--&lt;!&ndash;      <ol-zoomtoextent-control &ndash;&gt;-->
+<!--&lt;!&ndash;          label="↕️"&ndash;&gt;-->
+<!--&lt;!&ndash;          tipLabel="Full map"&ndash;&gt;-->
+<!--&lt;!&ndash;      />&ndash;&gt;-->
 <!--      <ol-toggle-control-->
-<!--          html="🟢"-->
-<!--          className="edit"-->
-<!--          title="Circle"-->
-<!--          :onToggle="(active: boolean) => changeDrawType(active, 'Circle')"-->
+<!--          html="Bots"-->
+<!--          title="Show Bots"-->
+<!--          :className="showBots ? 'custom-ol-active' : ''"-->
+<!--          :onToggle="(active: boolean) => setShowBots(active)"-->
 <!--      />-->
 <!--      <ol-toggle-control-->
-<!--          html="〰️"-->
-<!--          className="edit"-->
-<!--          title="Line (double click to finish)"-->
-<!--          :onToggle="(active: boolean) => changeDrawType(active, 'LineString')"-->
+<!--          html="Follow"-->
+<!--          title="Follow Player"-->
+<!--          :onToggle="(active: boolean) => setFollowPlayer(active)"-->
 <!--      />-->
 <!--      <ol-toggle-control-->
-<!--          html="〰️"-->
-<!--          className="edit"-->
-<!--          title="Trash"-->
-<!--          :onToggle="(active: boolean) => changeDrawType(active, 'LineString')"-->
+<!--          html="QR"-->
+<!--          title="QR"-->
+<!--          className="qr-button"-->
+<!--          :onToggle="(active: boolean) => showQrCode = active"-->
 <!--      />-->
-<!--      <ol-zoomtoextent-control -->
-<!--          label="↕️"-->
-<!--          tipLabel="Full map"-->
-<!--      />-->
-      <ol-toggle-control
-          html="Bots"
-          title="Show Bots"
-          :className="showBots ? 'custom-ol-active' : ''"
-          :onToggle="(active: boolean) => setShowBots(active)"
-      />
-      <ol-toggle-control
-          html="Follow"
-          title="Follow Player"
-          :onToggle="(active: boolean) => setFollowPlayer(active)"
-      />
-      <ol-toggle-control
-          html="QR"
-          title="QR"
-          className="qr-button"
-          :onToggle="(active: boolean) => showQrCode = active"
-      />
-    </ol-control-bar>
+<!--    </ol-control-bar>-->
 
 <!--    <ol-interaction-draw-->
 <!--        :type="drawType"-->
@@ -700,21 +716,30 @@ onMounted(() => {
   </ol-map>
   
   <div
+      v-if="!shouldShowConnectPrompt"
+      class="map-button-row"
+    >
+    <button @click="toggleShowBots()" :style="{backgroundColor: showBots ? 'lightgreen' : '#f0f0f0'}">Show Bots</button>
+    <button @click="setFollowPlayer(!followPlayer)" :style="{backgroundColor: followPlayer ? 'lightgreen' : '#f0f0f0'}">Follow Player</button>
+    <button @click="showQrCode = !showQrCode">Show QR</button>
+  </div>
+  
+  <div
       v-if="shouldShowConnectPrompt"
       class="connection-prompt-box"
   >
     <div>Input server address</div>
     <div class="input-box"><span>IPV4 Address: <a href="https://support.microsoft.com/en-us/windows/find-your-ip-address-in-windows-f21a9bbc-c582-55cd-35e0-73431160a1b9#Category=Windows_10" target="_blank">?</a></span><input v-model="serverAddress" placeholder="127.0.0.1"></div>
     <div class="input-box"><span>Port:</span><input v-model="serverPort" placeholder="45365"></div>
-    <button @click="connectToServer">Connect</button>
-  </div>
-    
+    <button @click="connectToServer(false)">Connect</button>
+    <button v-if="savedServerAddress" @click="connectToServer(true)">Last: {{savedServerAddress + ':' + savedServerPort}}</button>
+  </div>    
     
   <div
       v-if="shouldShowError"
       class="connection-error"
   >
-    <span>Failed to connect to mod's server!</span>
+    <span>Failed to connect to SPT client!</span>
     <span>Make sure the game is running and firewall is not blocking it.</span>
   </div>
   
@@ -724,6 +749,7 @@ onMounted(() => {
       <div>{{ serverAddress }}:{{ serverPort }}</div>
     </div>
     <div v-if="qrCodeAddress === 'ERROR'">Error getting address!</div>
+    <button @click="showQrCode = false" style="font-size: 0.8em; margin-top: 5px">Close</button>
   </div>
 </template>
 
